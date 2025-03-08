@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redirect Failed</title>
+    <style>
+        body {
+            background-color: #121212;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            text-align: center;
+        }
+        .container {
+            max-width: 600px;
+            padding: 2rem;
+            background-color: #1e1e1e;
+            border-radius: 12px;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+            animation: fadeIn 0.8s ease-out;
+        }
+        h1 {
+            color: #bb86fc;
+            font-size: 2.4rem;
+            margin-bottom: 1.5rem;
+            line-height: 1.3;
+        }
+        p {
+            font-size: 1.2rem;
+            line-height: 1.6;
+            margin-bottom: 1.5rem;
+            color: #b0b0b0;
+        }
+        .icon {
+            margin-bottom: 1.5rem;
+        }
+        .icon svg {
+            width: 80px;
+            height: 80px;
+            fill: #cf6679;
+        }
+        .details {
+            background-color: #252525;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-top: 1.5rem;
+            text-align: left;
+            border-left: 4px solid #bb86fc;
+        }
+        .details code {
+            display: block;
+            margin-top: 0.5rem;
+            font-family: 'Courier New', Courier, monospace;
+            background-color: #2d2d2d;
+            padding: 0.5rem;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path d="M12 5.99L19.53 19H4.47L12 5.99M12 2L1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v4h2v-4z"/>
+            </svg>
+        </div>
+        <h1>If you are reading this our 301 didn't work...</h1>
+        <p>The tool you are using to access this page is not compatible with our redirection method.</p>
+        <div class="details">
+            <p>Possible reasons:</p>
+            <code>• Your client doesn't follow HTTP redirects</code>
+            <code>• You're using a command-line tool like curl without the -L flag</code>
+            <code>• There might be a proxy or firewall blocking redirects</code>
+        </div>
+        <p>Please try accessing this resource with a standard web browser or enable redirect following in your current tool.</p>
+    </div>
+</body>
+</html>
