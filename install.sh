@@ -21,49 +21,122 @@ clear_and_show_result() {
     print_colored "blue" "Version: $LATEST_VERSION"
     print_colored "blue" "Location: $INSTALL_DIR/$BINARY_NAME"
     echo ""
-    print_colored "yellow" "To verify installation, run: omni --version"
+    print_colored "yellow" "You can now use the 'omni' command from your terminal."
     echo ""
 }
 
-# Fix PATH issues by cleaning bash completion and hash tables
-fix_path_references() {
-    print_colored "yellow" "Checking for stale references to omni..."
+# Function to reload shell environment
+reload_shell_env() {
+    print_colored "yellow" "Reloading shell environment..."
     
-    # Clear bash hash table
+    # Create a temporary script to update PATH and rehash
+    TEMP_RELOAD_SCRIPT=$(mktemp)
+    cat > "$TEMP_RELOAD_SCRIPT" << 'EOF'
+#!/bin/bash
+# Add installation directory to PATH if not already there
+if ! echo "$PATH" | tr ':' '\n' | grep -q "^/usr/local/bin$"; then
+    export PATH="/usr/local/bin:$PATH"
+fi
+
+# Clear bash hash table
+hash -r 2>/dev/null || true
+
+# Notify user
+echo "Shell environment reloaded. The omni command should now be available."
+EOF
+    
+    chmod +x "$TEMP_RELOAD_SCRIPT"
+    
+    # Execute with source to affect current environment
+    . "$TEMP_RELOAD_SCRIPT"
+    
+    # Clean up
+    rm -f "$TEMP_RELOAD_SCRIPT"
+    
+    # Verify it worked
+    if command -v omni >/dev/null 2>&1; then
+        print_colored "green" "✓ Successfully reloaded environment. 'omni' command is now available!"
+        ENVIRONMENT_RELOADED=1
+    else
+        print_colored "yellow" "Automatic reload wasn't fully successful."
+        print_colored "yellow" "Please restart your terminal or run: export PATH=\"/usr/local/bin:\$PATH\""
+    fi
+}
+
+# Fix PATH issues in shell config files
+fix_shell_config() {
+    local config_files=("$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.zshrc")
+    local modified=0
+    
+    print_colored "yellow" "Checking shell configuration files..."
+    
+    # First find all possible ghost entries
+    local ghost_patterns=()
+    if [ -d "$HOME/.cargo/bin" ] && ! [ -f "$HOME/.cargo/bin/omni" ]; then
+        ghost_patterns+=("/.cargo/bin/omni")
+    fi
+    
+    # Check for other non-existent paths that might be referenced
+    if command -v omni >/dev/null 2>&1; then
+        omni_path=$(which omni 2>/dev/null)
+        if [ ! -f "$omni_path" ] && [ -n "$omni_path" ]; then
+            # Escape the path for grep
+            escaped_path=$(echo "$omni_path" | sed 's/\//\\\//g')
+            ghost_patterns+=("$escaped_path")
+        fi
+    fi
+    
+    # Process each config file
+    for config_file in "${config_files[@]}"; do
+        if [ -f "$config_file" ]; then
+            local file_modified=0
+            
+            # Check for all ghost patterns
+            for pattern in "${ghost_patterns[@]}"; do
+                if grep -q "$pattern" "$config_file" 2>/dev/null; then
+                    if [ $file_modified -eq 0 ]; then
+                        print_colored "blue" "Found ghost reference in $config_file, updating..."
+                        # Backup the file (only once per file)
+                        cp "$config_file" "${config_file}.bak.$(date +%s)"
+                        file_modified=1
+                    fi
+                    
+                    # Show the specific lines being removed
+                    print_colored "yellow" "Removing these lines from $config_file:"
+                    grep "$pattern" "$config_file" | while read -r line; do
+                        print_colored "red" "  $line"
+                    done
+                    
+                    # Remove problematic lines
+                    grep -v "$pattern" "$config_file" > "${config_file}.tmp"
+                    mv "${config_file}.tmp" "$config_file"
+                    
+                    modified=1
+                fi
+            done
+            
+            # Make sure /usr/local/bin is in PATH if we modified the file
+            if [ $file_modified -eq 1 ] && ! grep -q "export PATH=\"/usr/local/bin:" "$config_file" && ! grep -q "export PATH=/usr/local/bin:" "$config_file"; then
+                echo "" >> "$config_file"
+                echo "# Added by OmniCloud installer" >> "$config_file"
+                echo "export PATH=\"/usr/local/bin:\$PATH\"" >> "$config_file"
+                print_colored "green" "✓ Added /usr/local/bin to PATH in $config_file"
+            fi
+            
+            if [ $file_modified -eq 1 ]; then
+                print_colored "green" "✓ Updated $config_file"
+            fi
+        fi
+    done
+    
+    # Also check for ghost entries in bash hash table
+    print_colored "blue" "Clearing command hash table..."
     hash -r 2>/dev/null || true
     
-    # Check for ghost entries in cargo bin
-    if [ -d "$HOME/.cargo/bin" ] && ! [ -f "$HOME/.cargo/bin/omni" ] && grep -q "$HOME/.cargo/bin/omni" "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile" 2>/dev/null; then
-        print_colored "yellow" "Found ghost reference to omni in Cargo bin directory"
-        print_colored "blue" "Cleaning up PATH references..."
-        
-        # Create a fix script that will run at next login
-        FIX_SCRIPT="$HOME/.fix_omni_path.sh"
-        cat > "$FIX_SCRIPT" << 'EOF'
-#!/bin/bash
-# Remove any lines referencing non-existent omni in cargo
-for file in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile"; do
-    if [ -f "$file" ]; then
-        # Backup the file
-        cp "$file" "${file}.bak"
-        # Remove lines that reference the non-existent omni
-        grep -v "/.cargo/bin/omni" "$file" > "${file}.tmp"
-        mv "${file}.tmp" "$file"
-    fi
-done
-# Self-delete this script
-rm -- "$0"
-EOF
-        chmod +x "$FIX_SCRIPT"
-        
-        print_colored "blue" "Added cleanup script at $FIX_SCRIPT"
-        print_colored "yellow" "It will run automatically on next login, or you can run it manually with: bash $FIX_SCRIPT"
-    fi
-    
-    # Check if ~/.cargo/bin is in PATH but omni doesn't exist there
-    if echo "$PATH" | tr ':' '\n' | grep -q "$HOME/.cargo/bin" && ! [ -f "$HOME/.cargo/bin/omni" ]; then
-        print_colored "yellow" "Your PATH includes ~/.cargo/bin but omni is not there."
-        print_colored "blue" "This can cause 'command not found' errors if ~/.cargo/bin comes before $INSTALL_DIR in your PATH."
+    if [ $modified -eq 1 ]; then
+        print_colored "green" "✓ Shell configuration files updated successfully."
+    else
+        print_colored "blue" "No problematic references found in shell configuration files."
     fi
 }
 
@@ -93,11 +166,52 @@ fi
 DOWNLOAD_URL="https://github.com/OmniCloudOrg/Omni-CLI/releases/download/${LATEST_VERSION}/omni-linux"
 INSTALL_DIR="/usr/local/bin"
 BINARY_NAME="omni"
+ENVIRONMENT_RELOADED=0
 
 echo ""
 
-# Fix PATH issues with ghost entries
-fix_path_references
+# Check for ghost entries for omni
+find_ghost_entries() {
+    print_colored "yellow" "Checking for ghost references to omni..."
+    local found_ghosts=0
+    
+    # Check for non-existent omni in cargo bin
+    if [ -d "$HOME/.cargo/bin" ] && ! [ -f "$HOME/.cargo/bin/omni" ] && command -v omni >/dev/null 2>&1; then
+        which_output=$(which omni 2>/dev/null)
+        if [[ "$which_output" == *".cargo/bin/omni"* ]]; then
+            print_colored "red" "⚠️ Detected ghost reference to omni in ~/.cargo/bin"
+            found_ghosts=1
+        fi
+    fi
+    
+    # Check for any other ghost entries
+    if command -v omni >/dev/null 2>&1; then
+        omni_path=$(which omni 2>/dev/null)
+        if [ ! -f "$omni_path" ]; then
+            print_colored "red" "⚠️ Detected ghost reference to omni at $omni_path (file doesn't exist)"
+            found_ghosts=1
+        fi
+    fi
+    
+    # If any ghost entries were found, prompt user to fix them
+    if [ $found_ghosts -eq 1 ]; then
+        echo -n "Would you like to remove ghost entries for omni? (y/n): "
+        read -r remove_ghosts
+        if [ "$remove_ghosts" = "y" ] || [ "$remove_ghosts" = "Y" ]; then
+            print_colored "blue" "Removing ghost entries..."
+            fix_shell_config
+            return 0
+        else
+            print_colored "yellow" "Ghost entries will not be removed. This may cause issues."
+            return 1
+        fi
+    fi
+    
+    return 0
+}
+
+# Run ghost entry check
+find_ghost_entries
 
 # Check if the script is running with sudo
 if [ "$(id -u)" -eq 0 ]; then
@@ -141,60 +255,30 @@ fi
 rm -rf "$TEMP_DIR"
 print_colored "green" "✓ Cleaned up temporary files."
 
-# Create a safe helper that ensures correct PATH
-HELPER_SCRIPT="/tmp/omni_helper.sh"
-cat > "$HELPER_SCRIPT" << EOF
-#!/bin/bash
-# Force PATH to include installation directory first
-export PATH="$INSTALL_DIR:\$PATH"
-# Clear bash's memory of previous command locations
-hash -r 2>/dev/null || true
-# Run omni with all arguments
-"$INSTALL_DIR/$BINARY_NAME" "\$@"
-EOF
-chmod +x "$HELPER_SCRIPT"
-
-# Check if bash's completion needs updating
-print_colored "yellow" "Updating command database..."
+# Clean the system's command cache
+print_colored "yellow" "Updating system command cache..."
 $SUDO bash -c "hash -r 2>/dev/null || true"
-$SUDO bash -c "command -v $BINARY_NAME >/dev/null 2>&1 || { echo; echo \"$INSTALL_DIR\" > /etc/paths.d/omnicloud 2>/dev/null || true; }"
 
-# Ensure the binary is in PATH
-PATH_HAS_INSTALL_DIR=0
-echo "$PATH" | tr ':' '\n' | grep -q "^$INSTALL_DIR$" && PATH_HAS_INSTALL_DIR=1
+# Update PATH and reload shell environment
+export PATH="$INSTALL_DIR:$PATH"
+hash -r 2>/dev/null || true
 
-if [ $PATH_HAS_INSTALL_DIR -eq 0 ]; then
-    print_colored "yellow" "ℹ $INSTALL_DIR is not in your PATH. Adding it temporarily for this session."
-    export PATH="$INSTALL_DIR:$PATH"
-    
-    # Check if any profile files exist
-    PROFILE_FILES="$HOME/.bashrc $HOME/.bash_profile $HOME/.zshrc $HOME/.profile"
-    PROFILE_FOUND=0
-    
-    for FILE in $PROFILE_FILES; do
-        if [ -f "$FILE" ]; then
-            PROFILE_FOUND=1
-            echo -n "Would you like to add $INSTALL_DIR to your PATH in $FILE? (y/n): "
-            read -r add_path
-            if [ "$add_path" = "y" ] || [ "$add_path" = "Y" ]; then
-                echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$FILE"
-                print_colored "green" "✓ Added to $FILE. Changes will take effect in new terminal sessions."
-                break
-            fi
+# Reload shell environment
+reload_shell_env
+
+# Clean any existing bash completions for omni
+if [ -d "/etc/bash_completion.d" ] || [ -d "/usr/local/etc/bash_completion.d" ]; then
+    print_colored "yellow" "Checking for bash completions..."
+    for comp_dir in "/etc/bash_completion.d" "/usr/local/etc/bash_completion.d"; do
+        if [ -f "$comp_dir/omni" ]; then
+            $SUDO rm -f "$comp_dir/omni"
+            print_colored "blue" "Removed old bash completion for omni"
         fi
     done
-    
-    if [ $PROFILE_FOUND -eq 0 ]; then
-        print_colored "yellow" "To add permanently to your PATH, run one of these commands:"
-        print_colored "yellow" "For bash: echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.bashrc"
-        print_colored "yellow" "For zsh:  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.zshrc"
-    fi
-    echo ""
 fi
 
-# Verify installation with the helper script
-print_colored "yellow" "Verifying installation..."
-if "$HELPER_SCRIPT" --version >/dev/null 2>&1; then
+# Verify installation
+if [ $ENVIRONMENT_RELOADED -eq 1 ] && command -v omni >/dev/null 2>&1; then
     # Clear screen before showing verification
     clear_and_show_result
     
@@ -203,17 +287,38 @@ if "$HELPER_SCRIPT" --version >/dev/null 2>&1; then
     read -r show_help
     if [ "$show_help" = "y" ] || [ "$show_help" = "Y" ]; then
         echo ""
-        "$HELPER_SCRIPT" --help
+        omni --help
     fi
-    
-    # Important: remind user to restart terminal
-    echo ""
-    print_colored "yellow" "⚠️ IMPORTANT: Please restart your terminal or run 'source ~/.bashrc' (or equivalent)"
-    print_colored "yellow" "to ensure the omni command works correctly in your current session."
 else
-    print_colored "red" "⚠️ Omni CLI was installed to $INSTALL_DIR/$BINARY_NAME but verification failed."
-    print_colored "blue" "You can still use it with the absolute path: $INSTALL_DIR/$BINARY_NAME"
-    print_colored "yellow" "After restarting your terminal, the 'omni' command should work correctly."
+    # If direct command failed, try absolute path
+    if [ -f "$INSTALL_DIR/$BINARY_NAME" ]; then
+        print_colored "yellow" "The 'omni' command isn't available directly yet, but the binary is installed."
+        print_colored "blue" "You can use it with the absolute path: $INSTALL_DIR/$BINARY_NAME"
+        
+        # Create alias for current session
+        alias omni="$INSTALL_DIR/$BINARY_NAME"
+        print_colored "green" "✓ Created temporary alias 'omni' for this session"
+        
+        # Check shell type and update config if possible
+        SHELL_NAME=$(basename "$SHELL")
+        if [ "$SHELL_NAME" = "bash" ] || [ "$SHELL_NAME" = "zsh" ]; then
+            CONFIG_FILE="$HOME/.${SHELL_NAME}rc"
+            if [ -f "$CONFIG_FILE" ]; then
+                echo -n "Would you like to update $CONFIG_FILE to include /usr/local/bin in PATH? (y/n): "
+                read -r update_config
+                if [ "$update_config" = "y" ] || [ "$update_config" = "Y" ]; then
+                    echo "" >> "$CONFIG_FILE"
+                    echo "# Added by OmniCloud installer" >> "$CONFIG_FILE"
+                    echo "export PATH=\"/usr/local/bin:\$PATH\"" >> "$CONFIG_FILE"
+                    echo "hash -r 2>/dev/null || true  # Clear command hash table" >> "$CONFIG_FILE"
+                    print_colored "green" "✓ Updated $CONFIG_FILE. Changes will take effect in new terminal sessions."
+                    print_colored "yellow" "Run 'source $CONFIG_FILE' to apply changes immediately."
+                fi
+            fi
+        fi
+    else
+        print_colored "red" "⚠️ Installation appears to have failed. The binary is not at $INSTALL_DIR/$BINARY_NAME."
+    fi
 fi
 
 echo ""
