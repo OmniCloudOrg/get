@@ -1,9 +1,9 @@
-#!/bin/bash
+#!/bin/sh
 
 # Function to print colored text compatible with various shells
 print_colored() {
-    local color=$1
-    local message=$2
+    color=$1
+    message=$2
     
     case $color in
         "green") printf "\033[0;32m%s\033[0m\n" "$message" ;;
@@ -32,13 +32,13 @@ reload_shell_env() {
     # Create a temporary script to update PATH and rehash
     TEMP_RELOAD_SCRIPT=$(mktemp)
     cat > "$TEMP_RELOAD_SCRIPT" << 'EOF'
-#!/bin/bash
+#!/bin/sh
 # Add installation directory to PATH if not already there
 if ! echo "$PATH" | tr ':' '\n' | grep -q "^/usr/local/bin$"; then
     export PATH="/usr/local/bin:$PATH"
 fi
 
-# Clear bash hash table
+# Clear hash table if possible
 hash -r 2>/dev/null || true
 
 # Notify user
@@ -65,72 +65,56 @@ EOF
 
 # Fix PATH issues in shell config files
 fix_shell_config() {
-    local config_files=("$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.zshrc")
-    local modified=0
-    
     print_colored "yellow" "Checking shell configuration files..."
+    modified=0
     
-    # First find all possible ghost entries
-    local ghost_patterns=()
+    # Check for cargo bin ghost entry
     if [ -d "$HOME/.cargo/bin" ] && ! [ -f "$HOME/.cargo/bin/omni" ]; then
-        ghost_patterns+=("/.cargo/bin/omni")
-    fi
-    
-    # Check for other non-existent paths that might be referenced
-    if command -v omni >/dev/null 2>&1; then
-        omni_path=$(which omni 2>/dev/null)
-        if [ ! -f "$omni_path" ] && [ -n "$omni_path" ]; then
-            # Escape the path for grep
-            escaped_path=$(echo "$omni_path" | sed 's/\//\\\//g')
-            ghost_patterns+=("$escaped_path")
-        fi
-    fi
-    
-    # Process each config file
-    for config_file in "${config_files[@]}"; do
-        if [ -f "$config_file" ]; then
-            local file_modified=0
-            
-            # Check for all ghost patterns
-            for pattern in "${ghost_patterns[@]}"; do
-                if grep -q "$pattern" "$config_file" 2>/dev/null; then
-                    if [ $file_modified -eq 0 ]; then
-                        print_colored "blue" "Found ghost reference in $config_file, updating..."
-                        # Backup the file (only once per file)
-                        cp "$config_file" "${config_file}.bak.$(date +%s)"
-                        file_modified=1
-                    fi
-                    
-                    # Show the specific lines being removed
-                    print_colored "yellow" "Removing these lines from $config_file:"
-                    grep "$pattern" "$config_file" | while read -r line; do
-                        print_colored "red" "  $line"
-                    done
-                    
-                    # Remove problematic lines
-                    grep -v "$pattern" "$config_file" > "${config_file}.tmp"
-                    mv "${config_file}.tmp" "$config_file"
-                    
-                    modified=1
+        for config_file in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.zshrc"; do
+            if [ -f "$config_file" ] && grep -q "/.cargo/bin/omni" "$config_file" 2>/dev/null; then
+                print_colored "blue" "Found ghost reference in $config_file, updating..."
+                
+                # Backup the file
+                cp "$config_file" "${config_file}.bak.$(date +%s)"
+                
+                # Show the specific lines being removed
+                print_colored "yellow" "Removing these lines from $config_file:"
+                grep "/.cargo/bin/omni" "$config_file" | while read -r line; do
+                    print_colored "red" "  $line"
+                done
+                
+                # Remove problematic lines
+                grep -v "/.cargo/bin/omni" "$config_file" > "${config_file}.tmp"
+                mv "${config_file}.tmp" "$config_file"
+                
+                # Make sure /usr/local/bin is in PATH
+                if ! grep -q "export PATH=\"/usr/local/bin:" "$config_file" && ! grep -q "export PATH=/usr/local/bin:" "$config_file"; then
+                    echo "" >> "$config_file"
+                    echo "# Added by OmniCloud installer" >> "$config_file"
+                    echo "export PATH=\"/usr/local/bin:\$PATH\"" >> "$config_file"
+                    print_colored "green" "✓ Added /usr/local/bin to PATH in $config_file"
                 fi
-            done
-            
-            # Make sure /usr/local/bin is in PATH if we modified the file
-            if [ $file_modified -eq 1 ] && ! grep -q "export PATH=\"/usr/local/bin:" "$config_file" && ! grep -q "export PATH=/usr/local/bin:" "$config_file"; then
-                echo "" >> "$config_file"
-                echo "# Added by OmniCloud installer" >> "$config_file"
-                echo "export PATH=\"/usr/local/bin:\$PATH\"" >> "$config_file"
-                print_colored "green" "✓ Added /usr/local/bin to PATH in $config_file"
-            fi
-            
-            if [ $file_modified -eq 1 ]; then
+                
+                modified=1
                 print_colored "green" "✓ Updated $config_file"
             fi
-        fi
-    done
+        done
+    fi
     
-    # Also check for ghost entries in bash hash table
-    print_colored "blue" "Clearing command hash table..."
+    # Check for any other ghost entries using which command
+    if command -v omni >/dev/null 2>&1; then
+        omni_path=$(which omni 2>/dev/null)
+        if [ -n "$omni_path" ] && [ ! -f "$omni_path" ]; then
+            print_colored "red" "⚠️ Detected ghost reference to omni at $omni_path (file doesn't exist)"
+            
+            # This is more complex - we'll handle by clearing hash table
+            print_colored "blue" "Clearing command hash table..."
+            hash -r 2>/dev/null || true
+            modified=1
+        fi
+    fi
+    
+    # Clear bash hash table in any case
     hash -r 2>/dev/null || true
     
     if [ $modified -eq 1 ]; then
@@ -140,45 +124,15 @@ fix_shell_config() {
     fi
 }
 
-# Display welcome message with better formatting
-clear
-printf "\033[0;34m┌─────────────────────────────────────────┐\033[0m\n"
-printf "\033[0;34m│        OmniCloud CLI Installer          │\033[0m\n"
-printf "\033[0;34m└─────────────────────────────────────────┘\033[0m\n"
-echo ""
-print_colored "green" "This script will install the Omni CLI tool to your system."
-echo ""
-
-# Define variables
-print_colored "yellow" "⏳ Checking for latest version..."
-LATEST_VERSION=$(curl -s https://api.github.com/repos/OmniCloudOrg/Omni-CLI/releases/latest | grep -Po '"tag_name": "\K.*?(?=")')
-if [ -z "$LATEST_VERSION" ]; then
-    # Fallback if grep -P is not available or curl fails
-    LATEST_VERSION=$(curl -s https://api.github.com/repos/OmniCloudOrg/Omni-CLI/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-fi
-if [ -z "$LATEST_VERSION" ]; then
-    LATEST_VERSION="v0.2.4"  # Fallback to a known version if detection fails
-    print_colored "yellow" "Could not detect latest version, using fallback: $LATEST_VERSION"
-else
-    print_colored "blue" "Latest version: $LATEST_VERSION"
-fi
-
-DOWNLOAD_URL="https://github.com/OmniCloudOrg/Omni-CLI/releases/download/${LATEST_VERSION}/omni-linux"
-INSTALL_DIR="/usr/local/bin"
-BINARY_NAME="omni"
-ENVIRONMENT_RELOADED=0
-
-echo ""
-
-# Check for ghost entries for omni
+# Find ghost entries for omni
 find_ghost_entries() {
     print_colored "yellow" "Checking for ghost references to omni..."
-    local found_ghosts=0
+    found_ghosts=0
     
     # Check for non-existent omni in cargo bin
     if [ -d "$HOME/.cargo/bin" ] && ! [ -f "$HOME/.cargo/bin/omni" ] && command -v omni >/dev/null 2>&1; then
         which_output=$(which omni 2>/dev/null)
-        if [[ "$which_output" == *".cargo/bin/omni"* ]]; then
+        if echo "$which_output" | grep -q ".cargo/bin/omni"; then
             print_colored "red" "⚠️ Detected ghost reference to omni in ~/.cargo/bin"
             found_ghosts=1
         fi
@@ -187,7 +141,7 @@ find_ghost_entries() {
     # Check for any other ghost entries
     if command -v omni >/dev/null 2>&1; then
         omni_path=$(which omni 2>/dev/null)
-        if [ ! -f "$omni_path" ]; then
+        if [ ! -f "$omni_path" ] && [ -n "$omni_path" ]; then
             print_colored "red" "⚠️ Detected ghost reference to omni at $omni_path (file doesn't exist)"
             found_ghosts=1
         fi
@@ -195,7 +149,7 @@ find_ghost_entries() {
     
     # If any ghost entries were found, prompt user to fix them
     if [ $found_ghosts -eq 1 ]; then
-        echo -n "Would you like to remove ghost entries for omni? (y/n): "
+        printf "Would you like to remove ghost entries for omni? (y/n): "
         read -r remove_ghosts
         if [ "$remove_ghosts" = "y" ] || [ "$remove_ghosts" = "Y" ]; then
             print_colored "blue" "Removing ghost entries..."
@@ -209,6 +163,32 @@ find_ghost_entries() {
     
     return 0
 }
+
+# Display welcome message with better formatting
+clear
+printf "\033[0;34m┌─────────────────────────────────────────┐\033[0m\n"
+printf "\033[0;34m│        OmniCloud CLI Installer          │\033[0m\n"
+printf "\033[0;34m└─────────────────────────────────────────┘\033[0m\n"
+echo ""
+print_colored "green" "This script will install the Omni CLI tool to your system."
+echo ""
+
+# Define variables
+print_colored "yellow" "⏳ Checking for latest version..."
+LATEST_VERSION=$(curl -s https://api.github.com/repos/OmniCloudOrg/Omni-CLI/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+if [ -z "$LATEST_VERSION" ]; then
+    LATEST_VERSION="v0.2.4"  # Fallback to a known version if detection fails
+    print_colored "yellow" "Could not detect latest version, using fallback: $LATEST_VERSION"
+else
+    print_colored "blue" "Latest version: $LATEST_VERSION"
+fi
+
+DOWNLOAD_URL="https://github.com/OmniCloudOrg/Omni-CLI/releases/download/${LATEST_VERSION}/omni-linux"
+INSTALL_DIR="/usr/local/bin"
+BINARY_NAME="omni"
+ENVIRONMENT_RELOADED=0
+
+echo ""
 
 # Run ghost entry check
 find_ghost_entries
@@ -257,7 +237,7 @@ print_colored "green" "✓ Cleaned up temporary files."
 
 # Clean the system's command cache
 print_colored "yellow" "Updating system command cache..."
-$SUDO bash -c "hash -r 2>/dev/null || true"
+$SUDO sh -c "hash -r 2>/dev/null || true"
 
 # Update PATH and reload shell environment
 export PATH="$INSTALL_DIR:$PATH"
@@ -283,7 +263,7 @@ if [ $ENVIRONMENT_RELOADED -eq 1 ] && command -v omni >/dev/null 2>&1; then
     clear_and_show_result
     
     # Offer to show help
-    echo -n "Would you like to see the Omni CLI help information? (y/n): "
+    printf "Would you like to see the Omni CLI help information? (y/n): "
     read -r show_help
     if [ "$show_help" = "y" ] || [ "$show_help" = "Y" ]; then
         echo ""
@@ -295,16 +275,15 @@ else
         print_colored "yellow" "The 'omni' command isn't available directly yet, but the binary is installed."
         print_colored "blue" "You can use it with the absolute path: $INSTALL_DIR/$BINARY_NAME"
         
-        # Create alias for current session
-        alias omni="$INSTALL_DIR/$BINARY_NAME"
-        print_colored "green" "✓ Created temporary alias 'omni' for this session"
+        # We can't use alias in sh, so suggest alternative
+        print_colored "green" "✓ For this session, you can use: $INSTALL_DIR/$BINARY_NAME"
         
         # Check shell type and update config if possible
         SHELL_NAME=$(basename "$SHELL")
         if [ "$SHELL_NAME" = "bash" ] || [ "$SHELL_NAME" = "zsh" ]; then
             CONFIG_FILE="$HOME/.${SHELL_NAME}rc"
             if [ -f "$CONFIG_FILE" ]; then
-                echo -n "Would you like to update $CONFIG_FILE to include /usr/local/bin in PATH? (y/n): "
+                printf "Would you like to update $CONFIG_FILE to include /usr/local/bin in PATH? (y/n): "
                 read -r update_config
                 if [ "$update_config" = "y" ] || [ "$update_config" = "Y" ]; then
                     echo "" >> "$CONFIG_FILE"
