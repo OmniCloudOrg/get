@@ -6,7 +6,8 @@ echo "This script will install the Omni CLI tool to your system."
 echo ""
 
 # Define variables
-DOWNLOAD_URL="https://github.com/OmniCloudOrg/Omni-CLI/releases/download/v0.2.3/omni-linux"
+LATEST_VERSION=$(curl -s https://api.github.com/repos/OmniCloudOrg/Omni-CLI/releases/latest | grep -Po '"tag_name": "\K.*?(?=")')
+DOWNLOAD_URL="https://github.com/OmniCloudOrg/Omni-CLI/releases/download/${LATEST_VERSION}/omni-linux"
 INSTALL_DIR="/usr/local/bin"
 BINARY_NAME="omni"
 
