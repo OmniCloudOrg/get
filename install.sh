@@ -1,16 +1,16 @@
 #!/bin/bash
 
-# Function to print colored text
+# Function to print colored text compatible with various shells
 print_colored() {
     local color=$1
     local message=$2
     
     case $color in
-        "green") echo -e "\033[0;32m$message\033[0m" ;;
-        "yellow") echo -e "\033[0;33m$message\033[0m" ;;
-        "red") echo -e "\033[0;31m$message\033[0m" ;;
-        "blue") echo -e "\033[0;34m$message\033[0m" ;;
-        *) echo "$message" ;;
+        "green") printf "\033[0;32m%s\033[0m\n" "$message" ;;
+        "yellow") printf "\033[0;33m%s\033[0m\n" "$message" ;;
+        "red") printf "\033[0;31m%s\033[0m\n" "$message" ;;
+        "blue") printf "\033[0;34m%s\033[0m\n" "$message" ;;
+        *) printf "%s\n" "$message" ;;
     esac
 }
 
@@ -25,11 +25,47 @@ clear_and_show_result() {
     echo ""
 }
 
+# Check for existing omni installations
+check_existing_installs() {
+    local existing_paths=$(which -a omni 2>/dev/null || command -v omni 2>/dev/null || echo "")
+    
+    if [ -n "$existing_paths" ]; then
+        print_colored "yellow" "⚠️ Found existing omni installations:"
+        echo "$existing_paths" | while read -r path; do
+            if [ -n "$path" ] && [ "$path" != "$INSTALL_DIR/$BINARY_NAME" ]; then
+                print_colored "yellow" "  - $path"
+                if [ -f "$path" ]; then
+                    echo -n "   Would you like to remove this installation? (y/n): "
+                    read -r answer
+                    if [ "$answer" = "y" ] || [ "$answer" = "Y" ]; then
+                        if rm "$path" 2>/dev/null; then
+                            print_colored "green" "   ✓ Removed $path"
+                        else
+                            print_colored "red" "   ✗ Failed to remove $path (may need sudo)"
+                            if [ -f "$path" ]; then
+                                echo -n "   Try with sudo? (y/n): "
+                                read -r sudo_answer
+                                if [ "$sudo_answer" = "y" ] || [ "$sudo_answer" = "Y" ]; then
+                                    if sudo rm "$path" 2>/dev/null; then
+                                        print_colored "green" "   ✓ Removed $path with sudo"
+                                    else
+                                        print_colored "red" "   ✗ Failed to remove even with sudo"
+                                    fi
+                                fi
+                            fi
+                        fi
+                    fi
+                fi
+            fi
+        done
+    fi
+}
+
 # Display welcome message with better formatting
 clear
-print_colored "blue" "┌─────────────────────────────────────────┐"
-print_colored "blue" "│        OmniCloud CLI Installer          │"
-print_colored "blue" "└─────────────────────────────────────────┘"
+printf "\033[0;34m┌─────────────────────────────────────────┐\033[0m\n"
+printf "\033[0;34m│        OmniCloud CLI Installer          │\033[0m\n"
+printf "\033[0;34m└─────────────────────────────────────────┘\033[0m\n"
 echo ""
 print_colored "green" "This script will install the Omni CLI tool to your system."
 echo ""
@@ -37,15 +73,28 @@ echo ""
 # Define variables
 print_colored "yellow" "⏳ Checking for latest version..."
 LATEST_VERSION=$(curl -s https://api.github.com/repos/OmniCloudOrg/Omni-CLI/releases/latest | grep -Po '"tag_name": "\K.*?(?=")')
+if [ -z "$LATEST_VERSION" ]; then
+    # Fallback if grep -P is not available or curl fails
+    LATEST_VERSION=$(curl -s https://api.github.com/repos/OmniCloudOrg/Omni-CLI/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+fi
+if [ -z "$LATEST_VERSION" ]; then
+    LATEST_VERSION="v0.2.4"  # Fallback to a known version if detection fails
+    print_colored "yellow" "Could not detect latest version, using fallback: $LATEST_VERSION"
+else
+    print_colored "blue" "Latest version: $LATEST_VERSION"
+fi
+
 DOWNLOAD_URL="https://github.com/OmniCloudOrg/Omni-CLI/releases/download/${LATEST_VERSION}/omni-linux"
 INSTALL_DIR="/usr/local/bin"
 BINARY_NAME="omni"
 
-print_colored "blue" "Latest version: $LATEST_VERSION"
 echo ""
 
+# Check for existing installations
+check_existing_installs
+
 # Check if the script is running with sudo
-if [ "$EUID" -eq 0 ]; then
+if [ "$(id -u)" -eq 0 ]; then
     print_colored "green" "✓ Running with sudo privileges."
     SUDO=""
 else
@@ -87,7 +136,10 @@ rm -rf "$TEMP_DIR"
 print_colored "green" "✓ Cleaned up temporary files."
 
 # Ensure the binary is in PATH
-if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+PATH_HAS_INSTALL_DIR=0
+echo "$PATH" | tr ':' '\n' | grep -q "^$INSTALL_DIR$" && PATH_HAS_INSTALL_DIR=1
+
+if [ $PATH_HAS_INSTALL_DIR -eq 0 ]; then
     print_colored "yellow" "ℹ $INSTALL_DIR is not in your PATH. Adding temporarily for this session."
     export PATH="$PATH:$INSTALL_DIR"
     
@@ -99,15 +151,16 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
 fi
 
 # Verify installation
-if command -v $BINARY_NAME &> /dev/null; then
+if command -v "$BINARY_NAME" >/dev/null 2>&1; then
     # Clear screen before showing verification
     clear_and_show_result
     
     # Offer to show help
-    read -p "Would you like to see the Omni CLI help information? (y/n): " show_help
-    if [[ "$show_help" =~ ^[Yy]$ ]]; then
+    echo -n "Would you like to see the Omni CLI help information? (y/n): "
+    read -r show_help
+    if [ "$show_help" = "y" ] || [ "$show_help" = "Y" ]; then
         echo ""
-        $BINARY_NAME --help
+        "$BINARY_NAME" --help
     fi
 else
     print_colored "red" "⚠️ Omni CLI was installed to $INSTALL_DIR but might not be in your PATH."
