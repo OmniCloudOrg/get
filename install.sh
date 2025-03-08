@@ -58,7 +58,7 @@ if command -v $BINARY_NAME &> /dev/null; then
     echo ""
     echo "✅ Omni CLI has been successfully installed!"
     echo "You can now use the 'omni' command from your terminal."
-    $BINARY_NAME --version || echo "Omni CLI is installed but may require additional setup."
+    $BINARY_NAME || echo "Omni CLI is installed but may require additional setup."
 else
     echo ""
     echo "⚠️ Omni CLI was installed to $INSTALL_DIR but might not be in your PATH."
